@@ -936,7 +936,7 @@ func SetupViper(v *viper.Viper, filename string, bidderInfos BidderInfos) {
 	v.SetDefault("stored_requests.database.poll_for_updates.timeout_ms", 0)
 	v.SetDefault("stored_requests.database.poll_for_updates.query", "")
 	v.SetDefault("stored_requests.database.poll_for_updates.amp_query", "")
-	v.SetDefault("stored_requests.filesystem.enabled", false)
+	v.SetDefault("stored_requests.filesystem.enabled", true)
 	v.SetDefault("stored_requests.filesystem.directorypath", "./stored_requests/data/by_id")
 	v.SetDefault("stored_requests.directorypath", "./stored_requests/data/by_id")
 	v.SetDefault("stored_requests.http.endpoint", "")
@@ -1026,7 +1026,7 @@ func SetupViper(v *viper.Viper, filename string, bidderInfos BidderInfos) {
 
 	v.SetDefault("user_sync.priority_groups", [][]string{})
 
-	v.SetDefault("accounts.filesystem.enabled", false)
+	v.SetDefault("accounts.filesystem.enabled", true)
 	v.SetDefault("accounts.filesystem.directorypath", "./stored_requests/data/by_id")
 	v.SetDefault("accounts.in_memory_cache.type", "none")
 

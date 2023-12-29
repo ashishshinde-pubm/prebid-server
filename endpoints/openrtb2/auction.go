@@ -291,36 +291,29 @@ func (deps *endpointDeps) Auction(w http.ResponseWriter, r *http.Request, _ http
 		return
 	}
 
-	err = setSeatNonBidRaw(req, auctionResponse)
-	if err != nil {
-		glog.Errorf("Error setting seat non-bid: %v", err)
-	}
 	labels, ao = sendAuctionResponse(w, hookExecutor, response, req.BidRequest, account, labels, ao)
 }
 
-// setSeatNonBidRaw is transitional function for setting SeatNonBid inside bidResponse.Ext
+// setSeatNonBidInResponseExt is transitional function for setting SeatNonBid inside bidResponse.Ext
 // Because,
 // 1. today exchange.HoldAuction prepares and marshals some piece of response.Ext which is then used by auction.go, amp_auction.go and video_auction.go
 // 2. As per discussion with Prebid Team we are planning to move away from - HoldAuction building openrtb2.BidResponse. instead respective auction modules will build this object
 // 3. So, we will need this method to do first,  unmarshalling of response.Ext
-func setSeatNonBidRaw(request *openrtb_ext.RequestWrapper, auctionResponse *exchange.AuctionResponse) error {
-	if auctionResponse == nil || auctionResponse.BidResponse == nil {
-		return nil
+func setSeatNonBidInResponseExt(response *openrtb2.BidResponse, requestWrapper *openrtb_ext.RequestWrapper, seatNonBids []openrtb_ext.SeatNonBid) error {
+	if response == nil {
+		return fmt.Errorf("response is nil")
 	}
-	// unmarshalling is required here, until we are moving away from bidResponse.Ext, which is populated
-	// by HoldAuction
-	response := auctionResponse.BidResponse
+	// unmarshalling is required here, until we are moving away from bidResponse.Ext, which is populated by HoldAuction
 	respExt := &openrtb_ext.ExtBidResponse{}
 	if err := jsonutil.Unmarshal(response.Ext, &respExt); err != nil {
 		return err
 	}
-	if setSeatNonBid(respExt, request, auctionResponse) {
-		if respExtJson, err := jsonutil.Marshal(respExt); err == nil {
-			response.Ext = respExtJson
-			return nil
-		} else {
+	if setSeatNonBid(respExt, requestWrapper, seatNonBids) {
+		respExtJson, err := jsonutil.Marshal(respExt)
+		if err != nil {
 			return err
 		}
+		response.Ext = respExtJson
 	}
 	return nil
 }
@@ -345,6 +338,53 @@ func rejectAuctionRequest(
 	return sendAuctionResponse(w, hookExecutor, response, request, account, labels, ao)
 }
 
+// mergeSeatNonBidsFromStageOutcomes merges seat non-bids from stage outcomes
+// seatNonBids: slice of seatNonBids
+// stageOutcomes: slice of stage outcomes
+// returns a slice of merged seatNonBids
+func mergeSeatNonBidsFromStageOutcomes(seatNonBids []openrtb_ext.SeatNonBid,
+	stageOutcomes []hookexecution.StageOutcome) []openrtb_ext.SeatNonBid {
+	seatNonBidsMap := make(map[string]openrtb_ext.SeatNonBid)
+
+	for _, seatNonBid := range seatNonBids {
+		existingSeatNonBid, ok := seatNonBidsMap[seatNonBid.Seat]
+		if ok {
+			existingSeatNonBid.NonBid = append(existingSeatNonBid.NonBid, seatNonBid.NonBid...)
+			if existingSeatNonBid.Ext == nil && seatNonBid.Ext != nil {
+				existingSeatNonBid.Ext = seatNonBid.Ext
+			}
+		} else {
+			existingSeatNonBid = seatNonBid
+		}
+		seatNonBidsMap[seatNonBid.Seat] = existingSeatNonBid
+	}
+
+	for _, stageOutcome := range stageOutcomes {
+		for _, groups := range stageOutcome.Groups {
+			for _, result := range groups.InvocationResults {
+				for resultSeat, resultSeatNonBid := range result.SeatNonBid {
+					existingSeatNonBid, ok := seatNonBidsMap[resultSeat]
+					if ok {
+						existingSeatNonBid.NonBid = append(existingSeatNonBid.NonBid, resultSeatNonBid.NonBid...)
+						if existingSeatNonBid.Ext == nil && resultSeatNonBid.Ext != nil {
+							existingSeatNonBid.Ext = resultSeatNonBid.Ext
+						}
+					} else {
+						existingSeatNonBid = resultSeatNonBid
+					}
+					seatNonBidsMap[resultSeat] = existingSeatNonBid
+				}
+			}
+		}
+	}
+
+	finalSeatNonBids := make([]openrtb_ext.SeatNonBid, 0, len(seatNonBidsMap))
+	for _, seatNonBid := range seatNonBidsMap {
+		finalSeatNonBids = append(finalSeatNonBids, seatNonBid)
+	}
+	return finalSeatNonBids
+}
+
 func sendAuctionResponse(
 	w http.ResponseWriter,
 	hookExecutor hookexecution.HookStageExecutor,
@@ -356,9 +396,15 @@ func sendAuctionResponse(
 ) (metrics.Labels, analytics.AuctionObject) {
 	hookExecutor.ExecuteAuctionResponseStage(response)
 
+	stageOutcomes := hookExecutor.GetOutcomes()
+	ao.SeatNonBid = mergeSeatNonBidsFromStageOutcomes(ao.SeatNonBid, stageOutcomes)
+
 	if response != nil {
-		stageOutcomes := hookExecutor.GetOutcomes()
 		ao.HookExecutionOutcome = stageOutcomes
+		err := setSeatNonBidInResponseExt(response, ao.RequestWrapper, ao.SeatNonBid)
+		if err != nil {
+			glog.Errorf("Error setting seat non-bid: %v", err)
+		}
 
 		ext, warns, err := hookexecution.EnrichExtBidResponse(response.Ext, stageOutcomes, request, account)
 		if err != nil {

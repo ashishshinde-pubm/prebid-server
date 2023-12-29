@@ -48,7 +48,24 @@ func handleBidderRequestHook(
 
 	result.ChangeSet = changeSet
 	result.ModuleContext = hookstage.ModuleContext{payload.Bidder: blockingAttributes}
-
+	result.SeatNonBids = map[string]openrtb_ext.SeatNonBid{
+		payload.Bidder: {
+			Seat: payload.Bidder,
+			NonBid: []openrtb_ext.NonBid{
+				{
+					ImpId:      "0_imp",
+					StatusCode: 99,
+					Ext: openrtb_ext.NonBidExt{
+						Prebid: openrtb_ext.ExtResponseNonBidPrebid{
+							Bid: openrtb_ext.NonBidObject{
+								Price: 100,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
 	return result, nil
 }
 

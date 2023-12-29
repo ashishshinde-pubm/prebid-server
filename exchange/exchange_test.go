@@ -5915,7 +5915,7 @@ func TestSetSeatNonBid(t *testing.T) {
 		},
 		{
 			name: "nil-bidResponseExt",
-			args: args{seatNonBids: nonBids{seatNonBidsMap: map[string][]openrtb_ext.NonBid{"key": nil}}, bidResponseExt: nil},
+			args: args{seatNonBids: nonBids{seatNonBidsMap: map[string]openrtb_ext.SeatNonBid{"key": openrtb_ext.SeatNonBid{}}}, bidResponseExt: nil},
 			want: &openrtb_ext.ExtBidResponse{
 				Prebid: &openrtb_ext.ExtResponsePrebid{
 					SeatNonBid: []openrtb_ext.SeatNonBid{{

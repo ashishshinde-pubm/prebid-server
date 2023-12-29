@@ -11,7 +11,7 @@ import (
 
 func TestSeatNonBidsAdd(t *testing.T) {
 	type fields struct {
-		seatNonBidsMap map[string][]openrtb_ext.NonBid
+		seatNonBidsMap map[string]openrtb_ext.SeatNonBid
 	}
 	type args struct {
 		bid          *entities.PbsOrtbBid
@@ -22,7 +22,7 @@ func TestSeatNonBidsAdd(t *testing.T) {
 		name   string
 		fields fields
 		args   args
-		want   map[string][]openrtb_ext.NonBid
+		want   map[string]openrtb_ext.SeatNonBid
 	}{
 		{
 			name:   "nil-seatNonBidsMap",
@@ -82,15 +82,18 @@ func TestSeatNonBidsGet(t *testing.T) {
 	}
 }
 
-var sampleSeatNonBidMap = func(seat string, nonBidCount int) map[string][]openrtb_ext.NonBid {
+var sampleSeatNonBidMap = func(seat string, nonBidCount int) map[string]openrtb_ext.SeatNonBid {
 	nonBids := make([]openrtb_ext.NonBid, 0)
 	for i := 0; i < nonBidCount; i++ {
 		nonBids = append(nonBids, openrtb_ext.NonBid{
 			Ext: openrtb_ext.NonBidExt{Prebid: openrtb_ext.ExtResponseNonBidPrebid{Bid: openrtb_ext.NonBidObject{}}},
 		})
 	}
-	return map[string][]openrtb_ext.NonBid{
-		seat: nonBids,
+	return map[string]openrtb_ext.SeatNonBid{
+		seat: openrtb_ext.SeatNonBid{
+			NonBid: nonBids,
+			Seat:   seat,
+		},
 	}
 }
 

@@ -6,7 +6,8 @@ import (
 )
 
 type nonBids struct {
-	seatNonBidsMap map[string][]openrtb_ext.NonBid
+	// seatNonBidsMap map[string][]openrtb_ext.NonBid
+	seatNonBidsMap map[string]openrtb_ext.SeatNonBid
 }
 
 // addBid is not thread safe as we are initializing and writing to map
@@ -15,7 +16,7 @@ func (snb *nonBids) addBid(bid *entities.PbsOrtbBid, nonBidReason int, seat stri
 		return
 	}
 	if snb.seatNonBidsMap == nil {
-		snb.seatNonBidsMap = make(map[string][]openrtb_ext.NonBid)
+		snb.seatNonBidsMap = make(map[string]openrtb_ext.SeatNonBid)
 	}
 	nonBid := openrtb_ext.NonBid{
 		ImpId:      bid.Bid.ImpID,
@@ -36,8 +37,12 @@ func (snb *nonBids) addBid(bid *entities.PbsOrtbBid, nonBidReason int, seat stri
 			}},
 		},
 	}
-
-	snb.seatNonBidsMap[seat] = append(snb.seatNonBidsMap[seat], nonBid)
+	seatNonBid, ok := snb.seatNonBidsMap[seat]
+	if !ok {
+		seatNonBid.Seat = seat
+	}
+	seatNonBid.NonBid = append(snb.seatNonBidsMap[seat].NonBid, nonBid)
+	snb.seatNonBidsMap[seat] = seatNonBid
 }
 
 func (snb *nonBids) get() []openrtb_ext.SeatNonBid {
@@ -48,7 +53,8 @@ func (snb *nonBids) get() []openrtb_ext.SeatNonBid {
 	for seat, nonBids := range snb.seatNonBidsMap {
 		seatNonBid = append(seatNonBid, openrtb_ext.SeatNonBid{
 			Seat:   seat,
-			NonBid: nonBids,
+			NonBid: nonBids.NonBid,
+			Ext:    nonBids.Ext,
 		})
 	}
 	return seatNonBid
