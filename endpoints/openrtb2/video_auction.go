@@ -350,7 +350,7 @@ func (deps *endpointDeps) VideoAuctionEndpoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if bidReq.Test == 1 {
-		err = setSeatNonBidRaw(bidReqWrapper, auctionResponse)
+		err = setSeatNonBidInResponseExt(response, bidReqWrapper, vo.SeatNonBid)
 		if err != nil {
 			glog.Errorf("Error setting seat non-bid: %v", err)
 		}

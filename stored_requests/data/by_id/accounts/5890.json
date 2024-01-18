@@ -1,0 +1,72 @@
+{
+    "id": "5890",
+    "name": "test account",
+    "disabled": false,
+    "cache_ttl": {
+      "banner": 600,
+      "video": 3600,
+      "native": 3600,
+      "audio": 3600
+    },
+    "events": {
+      "enabled": true
+    },
+    "cookie_sync": {
+      "default_limt": 20,
+      "max_limit": 50,
+      "default_coop_sync": true
+    },
+    "hooks": {
+        "modules": {
+            "prebid": {
+                "ortb2blocking": {
+                    "attributes": {
+                        "badv": {
+                            "enforce_blocks": true,
+                            "blocked_adomain": ["www.addomain.com"]                            
+                        }
+                    }
+                }
+            }
+        },
+        "execution_plan": {
+            "endpoints": {
+                "/openrtb2/amp": {
+                    "stages": {
+                        "bidder_request": {
+                            "groups": [
+                                {
+                                    "timeout": 5,
+                                    "hook_sequence": [
+                                        {
+                                            "module_code": "prebid.ortb2blocking",
+                                            "hook_impl_code": "ortb2-blocking-bidder-request"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                },
+                "/openrtb2/auction": {
+                    "stages": {
+                        "bidder_request": {
+                            "groups": [
+                                {
+                                    "timeout": 5,
+                                    "hook_sequence": [
+                                        {
+                                            "module_code": "prebid.ortb2blocking",
+                                            "hook_impl_code": "ortb2-blocking-bidder-request"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+  

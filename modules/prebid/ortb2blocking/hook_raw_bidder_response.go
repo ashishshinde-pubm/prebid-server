@@ -10,6 +10,7 @@ import (
 	"github.com/prebid/prebid-server/v2/adapters"
 	"github.com/prebid/prebid-server/v2/hooks/hookexecution"
 	"github.com/prebid/prebid-server/v2/hooks/hookstage"
+	"github.com/prebid/prebid-server/v2/openrtb_ext"
 )
 
 func handleRawBidderResponseHook(
@@ -34,6 +35,9 @@ func handleRawBidderResponseHook(
 
 	// allowedBids will store all bids that have passed the attribute check
 	allowedBids := make([]*adapters.TypedBid, 0)
+
+	var nonBids []openrtb_ext.NonBid
+
 	for _, bid := range payload.Bids {
 
 		failedChecksData := make(map[string]interface{})
@@ -73,6 +77,10 @@ func handleRawBidderResponseHook(
 			failedAttributes := getFailedAttributes(failedChecksData)
 			addBlockedAnalyticTag(&result, bidder, bid.Bid.ImpID, failedAttributes, failedChecksData)
 			addDebugMessage(&result, bid.Bid, bidder, failedAttributes)
+			nonBid := createNonBid(bidder, bid, failedChecksData)
+			if nonBid != nil {
+				nonBids = append(nonBids, *nonBid)
+			}
 		}
 	}
 
@@ -80,9 +88,46 @@ func handleRawBidderResponseHook(
 	if len(payload.Bids) != len(allowedBids) {
 		changeSet.RawBidderResponse().Bids().Update(allowedBids)
 		result.ChangeSet = changeSet
+		result.SeatNonBids = map[string]openrtb_ext.SeatNonBid{
+			bidder: {
+				NonBid: nonBids,
+				Seat:   bidder,
+			},
+		}
 	}
 
 	return result, err
+}
+
+func createNonBid(bidder string, bid *adapters.TypedBid, data map[string]interface{}) (nonBid *openrtb_ext.NonBid) {
+	for _, attribute := range [5]string{
+		"badv",
+		"bcat",
+		"cattax",
+		"bapp",
+		"battr",
+	} {
+		if _, ok := data[attribute]; ok {
+			nbr := 356
+			if attribute == "badv" {
+				nbr = 350
+			}
+			return &openrtb_ext.NonBid{
+				ImpId:      bid.Bid.ImpID,
+				StatusCode: nbr,
+				Ext: openrtb_ext.NonBidExt{
+					Prebid: openrtb_ext.ExtResponseNonBidPrebid{
+						Bid: openrtb_ext.NonBidObject{
+							Price: bid.Bid.Price,
+						},
+					},
+				},
+			}
+
+		}
+
+	}
+	return nil
 }
 
 func mediaTypesFromBid(bid *adapters.TypedBid) mediaTypes {
