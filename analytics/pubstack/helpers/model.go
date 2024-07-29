@@ -18,6 +18,7 @@ type logAuction struct {
 	Account              *config.Account
 	StartTime            time.Time
 	HookExecutionOutcome []hookexecution.StageOutcome
+	SeatNonBid           []openrtb_ext.SeatNonBid
 }
 
 type logVideo struct {

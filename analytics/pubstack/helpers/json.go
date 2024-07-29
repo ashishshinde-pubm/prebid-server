@@ -22,6 +22,7 @@ func JsonifyAuctionObject(ao *analytics.AuctionObject, scope string) ([]byte, er
 			Response:             ao.Response,
 			Account:              ao.Account,
 			StartTime:            ao.StartTime,
+			SeatNonBid:           ao.SeatNonBid,
 			HookExecutionOutcome: ao.HookExecutionOutcome,
 		}
 	}
