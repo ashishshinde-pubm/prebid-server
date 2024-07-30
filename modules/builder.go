@@ -1,6 +1,7 @@
 package modules
 
 import (
+	"github.com/prebid/prebid-server/v2/modules/prebid/katana"
 	prebidOrtb2blocking "github.com/prebid/prebid-server/v2/modules/prebid/ortb2blocking"
 )
 
@@ -10,6 +11,7 @@ func builders() ModuleBuilders {
 	return ModuleBuilders{
 		"prebid": {
 			"ortb2blocking": prebidOrtb2blocking.Builder,
+			"katana":        katana.Builder,
 		},
 	}
 }

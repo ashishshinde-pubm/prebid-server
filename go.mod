@@ -1,6 +1,8 @@
 module github.com/prebid/prebid-server/v2
 
-go 1.21
+go 1.21.0
+
+toolchain go1.21.4
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
@@ -8,6 +10,7 @@ require (
 	github.com/NYTimes/gziphandler v1.1.1
 	github.com/alitto/pond v1.8.3
 	github.com/asaskevich/govalidator v0.0.0-20210307081110-f21760c49a8d
+	github.com/beevik/etree v1.4.1
 	github.com/benbjohnson/clock v1.3.0
 	github.com/buger/jsonparser v1.1.1
 	github.com/chasex/glog v0.0.0-20160217080310-c62392af379c

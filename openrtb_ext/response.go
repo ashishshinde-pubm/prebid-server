@@ -48,7 +48,8 @@ type ExtResponsePrebid struct {
 	Fledge           *Fledge           `json:"fledge,omitempty"`
 	Targeting        map[string]string `json:"targeting,omitempty"`
 	// SeatNonBid holds the array of Bids which are either rejected, no bids inside bidresponse.ext.prebid.seatnonbid
-	SeatNonBid []SeatNonBid `json:"seatnonbid,omitempty"`
+	SeatNonBid []SeatNonBid     `json:"seatnonbid,omitempty"`
+	Floors     *PriceFloorRules `json:"floors,omitempty"`
 }
 
 // FledgeResponse defines the contract for bidresponse.ext.fledge
