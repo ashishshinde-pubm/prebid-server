@@ -94,7 +94,6 @@ func injectVideoCreativeTrackers(rctx models.RequestCtx, bid openrtb2.Bid, video
 					newElement := etree.NewElement(models.ImpressionElement)
 					newElement.SetText(videoParams[i].TrackerURL)
 					element.InsertChild(element.SelectElement(models.ImpressionElement), newElement)
-
 				}
 
 				if videoParams[i].Price != 0 {

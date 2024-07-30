@@ -10,7 +10,7 @@ require (
 	github.com/NYTimes/gziphandler v1.1.1
 	github.com/alitto/pond v1.8.3
 	github.com/asaskevich/govalidator v0.0.0-20210307081110-f21760c49a8d
-	github.com/beevik/etree v1.4.1
+	github.com/beevik/etree v1.0.2
 	github.com/benbjohnson/clock v1.3.0
 	github.com/buger/jsonparser v1.1.1
 	github.com/chasex/glog v0.0.0-20160217080310-c62392af379c
@@ -81,3 +81,5 @@ require (
 	gopkg.in/ini.v1 v1.66.4 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
+
+replace github.com/beevik/etree v1.0.2 => github.com/PubMatic-OpenWrap/etree v1.0.2-0.20210129100623-8f30cfecf9f4
