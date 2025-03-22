@@ -11,21 +11,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/prebid/prebid-server/v2/analytics"
-	analyticsBuild "github.com/prebid/prebid-server/v2/analytics/build"
-	"github.com/prebid/prebid-server/v2/config"
-	"github.com/prebid/prebid-server/v2/errortypes"
-	"github.com/prebid/prebid-server/v2/exchange"
-	"github.com/prebid/prebid-server/v2/hooks"
-	"github.com/prebid/prebid-server/v2/metrics"
-	metricsConfig "github.com/prebid/prebid-server/v2/metrics/config"
-	"github.com/prebid/prebid-server/v2/openrtb_ext"
-	"github.com/prebid/prebid-server/v2/ortb"
-	"github.com/prebid/prebid-server/v2/prebid_cache_client"
-	"github.com/prebid/prebid-server/v2/privacy"
-	"github.com/prebid/prebid-server/v2/stored_requests/backends/empty_fetcher"
-	"github.com/prebid/prebid-server/v2/util/jsonutil"
-	"github.com/prebid/prebid-server/v2/util/ptrutil"
+	"github.com/prebid/prebid-server/v3/analytics"
+	analyticsBuild "github.com/prebid/prebid-server/v3/analytics/build"
+	"github.com/prebid/prebid-server/v3/config"
+	"github.com/prebid/prebid-server/v3/errortypes"
+	"github.com/prebid/prebid-server/v3/exchange"
+	"github.com/prebid/prebid-server/v3/hooks"
+	"github.com/prebid/prebid-server/v3/metrics"
+	metricsConfig "github.com/prebid/prebid-server/v3/metrics/config"
+	"github.com/prebid/prebid-server/v3/openrtb_ext"
+	"github.com/prebid/prebid-server/v3/ortb"
+	"github.com/prebid/prebid-server/v3/prebid_cache_client"
+	"github.com/prebid/prebid-server/v3/privacy"
+	"github.com/prebid/prebid-server/v3/stored_requests/backends/empty_fetcher"
+	"github.com/prebid/prebid-server/v3/util/jsonutil"
+	"github.com/prebid/prebid-server/v3/util/ptrutil"
 
 	"github.com/prebid/openrtb/v20/adcom1"
 	"github.com/prebid/openrtb/v20/openrtb2"
@@ -156,7 +156,7 @@ func TestCreateBidExtensionTargeting(t *testing.T) {
 	require.NotNil(t, ex.lastRequest, "The request never made it into the Exchange.")
 
 	// assert targeting set to default
-	expectedRequestExt := `{"prebid":{"cache":{"vastxml":{}},"targeting":{"pricegranularity":{"precision":2,"ranges":[{"min":0,"max":20,"increment":0.1}]},"mediatypepricegranularity":{},"includebidderkeys":true,"includewinners":true,"includebrandcategory":{"primaryadserver":1,"publisher":"","withcategory":true}}}}`
+	expectedRequestExt := `{"prebid":{"cache":{"vastxml":{}},"targeting":{"pricegranularity":{"precision":2,"ranges":[{"min":0,"max":20,"increment":0.1}]},"includebidderkeys":true,"includewinners":true,"includebrandcategory":{"primaryadserver":1,"withcategory":true}}}}`
 	assert.JSONEq(t, expectedRequestExt, string(ex.lastRequest.Ext))
 }
 
@@ -814,15 +814,15 @@ func TestHandleError(t *testing.T) {
 				&errortypes.AccountDisabled{},
 			},
 			wantCode:          503,
-			wantMetricsStatus: metrics.RequestStatusBlacklisted,
+			wantMetricsStatus: metrics.RequestStatusBlockedApp,
 		},
 		{
 			description: "Blocked app - return 503 with blocked metrics status",
 			giveErrors: []error{
-				&errortypes.BlacklistedApp{},
+				&errortypes.BlockedApp{},
 			},
 			wantCode:          503,
-			wantMetricsStatus: metrics.RequestStatusBlacklisted,
+			wantMetricsStatus: metrics.RequestStatusBlockedApp,
 		},
 		{
 			description: "Account required error - return 400 with bad input metrics status",
@@ -1091,14 +1091,11 @@ func TestCCPA(t *testing.T) {
 		if ex.lastRequest == nil {
 			t.Fatalf("%s: The request never made it into the exchange.", test.description)
 		}
-		extRegs := &openrtb_ext.ExtRegs{}
-		if err := jsonutil.UnmarshalValid(ex.lastRequest.Regs.Ext, extRegs); err != nil {
-			t.Fatalf("%s: Failed to unmarshal reg.ext in request to the exchange: %v", test.description, err)
-		}
+
 		if test.expectConsentString {
-			assert.Len(t, extRegs.USPrivacy, 4, test.description+":consent")
+			assert.Len(t, ex.lastRequest.Regs.USPrivacy, 4, test.description+":consent")
 		} else if test.expectEmptyConsent {
-			assert.Empty(t, extRegs.USPrivacy, test.description+":consent")
+			assert.Empty(t, ex.lastRequest.Regs.USPrivacy, test.description+":consent")
 		}
 
 		// Validate HTTP Response
@@ -1392,6 +1389,7 @@ func (cf mockVideoStoredReqFetcher) FetchResponses(ctx context.Context, ids []st
 type mockExchangeVideo struct {
 	lastRequest *openrtb2.BidRequest
 	cache       *mockCacheClient
+	seatNonBid  openrtb_ext.SeatNonBidBuilder
 }
 
 func (m *mockExchangeVideo) HoldAuction(ctx context.Context, r *exchange.AuctionRequest, debugLog *exchange.DebugLog) (*exchange.AuctionResponse, error) {
@@ -1426,7 +1424,9 @@ func (m *mockExchangeVideo) HoldAuction(ctx context.Context, r *exchange.Auction
 				{ID: "16", ImpID: "5_2", Ext: ext},
 			},
 		}},
-	}}, nil
+	},
+		SeatNonBid: m.seatNonBid}, nil
+
 }
 
 type mockExchangeAppendBidderNames struct {
@@ -1515,4 +1515,106 @@ func TestVideoRequestValidationFailed(t *testing.T) {
 
 	assert.Equal(t, 500, recorder.Code, "Should catch error in request")
 	assert.Equal(t, "Critical error while running the video endpoint:  request.tmax must be nonnegative. Got -2", errorMessage, "Incorrect request validation message")
+}
+
+func TestSeatNonBidInVideoAuction(t *testing.T) {
+	bidRequest := openrtb_ext.BidRequestVideo{
+		Test:            1,
+		StoredRequestId: "80ce30c53c16e6ede735f123ef6e32361bfc7b22",
+		PodConfig: openrtb_ext.PodConfig{
+			DurationRangeSec:     []int{30, 50},
+			RequireExactDuration: true,
+			Pods: []openrtb_ext.Pod{
+				{PodId: 1, AdPodDurationSec: 30, ConfigId: "fba10607-0c12-43d1-ad07-b8a513bc75d6"},
+			},
+		},
+		App: &openrtb2.App{Bundle: "pbs.com"},
+		Video: &openrtb2.Video{
+			MIMEs:     []string{"mp4"},
+			Protocols: []adcom1.MediaCreativeSubtype{1},
+		},
+	}
+
+	type args struct {
+		nonBidsFromHoldAuction openrtb_ext.SeatNonBidBuilder
+	}
+	type want struct {
+		seatNonBid []openrtb_ext.SeatNonBid
+	}
+	testCases := []struct {
+		description string
+		args        args
+		want        want
+	}{
+		{
+			description: "holdAuction returns seatNonBid",
+			args: args{
+				nonBidsFromHoldAuction: getNonBids(map[string][]openrtb_ext.NonBidParams{
+					"pubmatic": {
+						{
+							Bid:          &openrtb2.Bid{ImpID: "imp"},
+							NonBidReason: 100,
+						},
+					},
+				}),
+			},
+			want: want{
+				seatNonBid: []openrtb_ext.SeatNonBid{
+					{
+						Seat: "pubmatic",
+						NonBid: []openrtb_ext.NonBid{
+							{
+								ImpId:      "imp",
+								StatusCode: 100,
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			description: "holdAuction does not return seatNonBid",
+			args: args{
+				nonBidsFromHoldAuction: openrtb_ext.SeatNonBidBuilder{},
+			},
+			want: want{
+				seatNonBid: nil,
+			},
+		},
+	}
+	for _, test := range testCases {
+		t.Run(test.description, func(t *testing.T) {
+			ex := &mockExchangeVideo{seatNonBid: test.args.nonBidsFromHoldAuction}
+			analyticsModule := mockAnalyticsModule{}
+			deps := &endpointDeps{
+				fakeUUIDGenerator{},
+				ex,
+				&mockBidderParamValidator{},
+				&mockVideoStoredReqFetcher{},
+				&mockVideoStoredReqFetcher{},
+				&mockAccountFetcher{data: mockVideoAccountData},
+				&config.Configuration{MaxRequestSize: maxSize},
+				&metricsConfig.NilMetricsEngine{},
+				&analyticsModule,
+				map[string]string{},
+				false,
+				[]byte{},
+				openrtb_ext.BuildBidderMap(),
+				ex.cache,
+				regexp.MustCompile(`[<>]`),
+				hardcodedResponseIPValidator{response: true},
+				empty_fetcher.EmptyFetcher{},
+				hooks.EmptyPlanBuilder{},
+				nil,
+				openrtb_ext.NormalizeBidderName,
+			}
+
+			reqBody, _ := jsonutil.Marshal(bidRequest)
+			req := httptest.NewRequest("POST", "/openrtb2/video", strings.NewReader(string(reqBody)))
+			recorder := httptest.NewRecorder()
+			deps.VideoAuctionEndpoint(recorder, req, nil)
+
+			assert.ElementsMatch(t, test.want.seatNonBid, analyticsModule.videoObjects[0].SeatNonBid, "mismatched seatnonbid.")
+		})
+	}
 }

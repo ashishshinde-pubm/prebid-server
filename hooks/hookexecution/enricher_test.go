@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	"github.com/prebid/openrtb/v20/openrtb2"
-	"github.com/prebid/prebid-server/v2/config"
-	"github.com/prebid/prebid-server/v2/hooks/hookanalytics"
-	"github.com/prebid/prebid-server/v2/openrtb_ext"
-	"github.com/prebid/prebid-server/v2/util/jsonutil"
+	"github.com/prebid/prebid-server/v3/config"
+	"github.com/prebid/prebid-server/v3/hooks/hookanalytics"
+	"github.com/prebid/prebid-server/v3/openrtb_ext"
+	"github.com/prebid/prebid-server/v3/util/jsonutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,14 +31,15 @@ type GroupOutcomeTest struct {
 
 type HookOutcomeTest struct {
 	ExecutionTime
-	AnalyticsTags hookanalytics.Analytics `json:"analytics_tags"`
-	HookID        HookID                  `json:"hook_id"`
-	Status        Status                  `json:"status"`
-	Action        Action                  `json:"action"`
-	Message       string                  `json:"message"`
-	DebugMessages []string                `json:"debug_messages"`
-	Errors        []string                `json:"errors"`
-	Warnings      []string                `json:"warnings"`
+	AnalyticsTags hookanalytics.Analytics       `json:"analytics_tags"`
+	HookID        HookID                        `json:"hook_id"`
+	Status        Status                        `json:"status"`
+	Action        Action                        `json:"action"`
+	Message       string                        `json:"message"`
+	DebugMessages []string                      `json:"debug_messages"`
+	Errors        []string                      `json:"errors"`
+	Warnings      []string                      `json:"warnings"`
+	SeatNonBid    openrtb_ext.SeatNonBidBuilder `json:"seatnonbid"`
 }
 
 func TestEnrichBidResponse(t *testing.T) {

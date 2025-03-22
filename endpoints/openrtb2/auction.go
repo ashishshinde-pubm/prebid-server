@@ -22,37 +22,37 @@ import (
 	"github.com/prebid/go-gpp/constants"
 	"github.com/prebid/openrtb/v20/openrtb2"
 	"github.com/prebid/openrtb/v20/openrtb3"
-	"github.com/prebid/prebid-server/v2/bidadjustment"
-	"github.com/prebid/prebid-server/v2/hooks"
-	"github.com/prebid/prebid-server/v2/ortb"
-	"github.com/prebid/prebid-server/v2/privacy"
-	"github.com/prebid/prebid-server/v2/privacysandbox"
+	"github.com/prebid/prebid-server/v3/bidadjustment"
+	"github.com/prebid/prebid-server/v3/hooks"
+	"github.com/prebid/prebid-server/v3/ortb"
+	"github.com/prebid/prebid-server/v3/privacy"
+	"github.com/prebid/prebid-server/v3/privacysandbox"
+	"github.com/prebid/prebid-server/v3/schain"
 	"golang.org/x/net/publicsuffix"
-	jsonpatch "gopkg.in/evanphx/json-patch.v4"
+	jsonpatch "gopkg.in/evanphx/json-patch.v5"
 
-	accountService "github.com/prebid/prebid-server/v2/account"
-	"github.com/prebid/prebid-server/v2/analytics"
-	"github.com/prebid/prebid-server/v2/config"
-	"github.com/prebid/prebid-server/v2/currency"
-	"github.com/prebid/prebid-server/v2/errortypes"
-	"github.com/prebid/prebid-server/v2/exchange"
-	"github.com/prebid/prebid-server/v2/gdpr"
-	"github.com/prebid/prebid-server/v2/hooks/hookexecution"
-	"github.com/prebid/prebid-server/v2/metrics"
-	"github.com/prebid/prebid-server/v2/openrtb_ext"
-	"github.com/prebid/prebid-server/v2/prebid_cache_client"
-	"github.com/prebid/prebid-server/v2/privacy/ccpa"
-	"github.com/prebid/prebid-server/v2/privacy/lmt"
-	"github.com/prebid/prebid-server/v2/schain"
-	"github.com/prebid/prebid-server/v2/stored_requests"
-	"github.com/prebid/prebid-server/v2/stored_requests/backends/empty_fetcher"
-	"github.com/prebid/prebid-server/v2/stored_responses"
-	"github.com/prebid/prebid-server/v2/usersync"
-	"github.com/prebid/prebid-server/v2/util/httputil"
-	"github.com/prebid/prebid-server/v2/util/iputil"
-	"github.com/prebid/prebid-server/v2/util/jsonutil"
-	"github.com/prebid/prebid-server/v2/util/uuidutil"
-	"github.com/prebid/prebid-server/v2/version"
+	accountService "github.com/prebid/prebid-server/v3/account"
+	"github.com/prebid/prebid-server/v3/analytics"
+	"github.com/prebid/prebid-server/v3/config"
+	"github.com/prebid/prebid-server/v3/currency"
+	"github.com/prebid/prebid-server/v3/errortypes"
+	"github.com/prebid/prebid-server/v3/exchange"
+	"github.com/prebid/prebid-server/v3/gdpr"
+	"github.com/prebid/prebid-server/v3/hooks/hookexecution"
+	"github.com/prebid/prebid-server/v3/metrics"
+	"github.com/prebid/prebid-server/v3/openrtb_ext"
+	"github.com/prebid/prebid-server/v3/prebid_cache_client"
+	"github.com/prebid/prebid-server/v3/privacy/ccpa"
+	"github.com/prebid/prebid-server/v3/privacy/lmt"
+	"github.com/prebid/prebid-server/v3/stored_requests"
+	"github.com/prebid/prebid-server/v3/stored_requests/backends/empty_fetcher"
+	"github.com/prebid/prebid-server/v3/stored_responses"
+	"github.com/prebid/prebid-server/v3/usersync"
+	"github.com/prebid/prebid-server/v3/util/httputil"
+	"github.com/prebid/prebid-server/v3/util/iputil"
+	"github.com/prebid/prebid-server/v3/util/jsonutil"
+	"github.com/prebid/prebid-server/v3/util/uuidutil"
+	"github.com/prebid/prebid-server/v3/version"
 )
 
 const ampChannel = "amp"
@@ -64,6 +64,7 @@ const observeBrowsingTopicsValue = "?1"
 
 var (
 	dntKey      string = http.CanonicalHeaderKey("DNT")
+	secGPCKey   string = http.CanonicalHeaderKey("Sec-GPC")
 	dntDisabled int8   = 0
 	dntEnabled  int8   = 1
 	notAmp      int8   = 0
@@ -163,6 +164,7 @@ func (deps *endpointDeps) Auction(w http.ResponseWriter, r *http.Request, _ http
 	// We can respect timeouts more accurately if we note the *real* start time, and use it
 	// to compute the auction timeout.
 	start := time.Now()
+	seatNonBid := &openrtb_ext.SeatNonBidBuilder{}
 
 	hookExecutor := hookexecution.NewHookExecutor(deps.hookExecutionPlanBuilder, hookexecution.EndpointAuction, deps.metricsEngine)
 
@@ -180,8 +182,15 @@ func (deps *endpointDeps) Auction(w http.ResponseWriter, r *http.Request, _ http
 		RequestStatus: metrics.RequestStatusOK,
 	}
 
+	foundErrors := false
 	activityControl := privacy.ActivityControl{}
 	defer func() {
+		// if AuctionObject.Response is nil then collect nonbids from all stage outcomes and set it in the AuctionObject.
+		// Nil AuctionObject.Response indicates the occurrence of a fatal error.
+		if foundErrors {
+			seatNonBid.Append(getNonBidsFromStageOutcomes(hookExecutor.GetOutcomes()))
+			ao.SeatNonBid = seatNonBid.Get()
+		}
 		deps.metricsEngine.RecordRequest(labels)
 		deps.metricsEngine.RecordRequestTime(labels, time.Since(start))
 		deps.analytics.LogAuctionObject(&ao, activityControl)
@@ -192,12 +201,13 @@ func (deps *endpointDeps) Auction(w http.ResponseWriter, r *http.Request, _ http
 
 	req, impExtInfoMap, storedAuctionResponses, storedBidResponses, bidderImpReplaceImp, account, errL := deps.parseRequest(r, &labels, hookExecutor)
 	if errortypes.ContainsFatalError(errL) && writeError(errL, w, &labels) {
+		foundErrors = true
 		return
 	}
 
 	if rejectErr := hookexecution.FindFirstRejectOrNil(errL); rejectErr != nil {
 		ao.RequestWrapper = req
-		labels, ao = rejectAuctionRequest(*rejectErr, w, hookExecutor, req.BidRequest, account, labels, ao)
+		labels, ao = rejectAuctionRequest(*rejectErr, w, hookExecutor, req.BidRequest, account, labels, ao, seatNonBid)
 		return
 	}
 
@@ -233,6 +243,7 @@ func (deps *endpointDeps) Auction(w http.ResponseWriter, r *http.Request, _ http
 	// Set Integration Information
 	err := deps.setIntegrationType(req, account)
 	if err != nil {
+		foundErrors = true
 		errL = append(errL, err)
 		writeError(errL, w, &labels)
 		return
@@ -271,11 +282,12 @@ func (deps *endpointDeps) Auction(w http.ResponseWriter, r *http.Request, _ http
 	var response *openrtb2.BidResponse
 	if auctionResponse != nil {
 		response = auctionResponse.BidResponse
+		seatNonBid.Append(auctionResponse.SeatNonBid)
 	}
 	ao.Response = response
-	ao.SeatNonBid = auctionResponse.GetSeatNonBid()
 	rejectErr, isRejectErr := hookexecution.CastRejectErr(err)
 	if err != nil && !isRejectErr {
+		foundErrors = true
 		if errortypes.ReadCode(err) == errortypes.BadInputErrorCode {
 			writeError([]error{err}, w, &labels)
 			return
@@ -288,15 +300,11 @@ func (deps *endpointDeps) Auction(w http.ResponseWriter, r *http.Request, _ http
 		ao.Errors = append(ao.Errors, err)
 		return
 	} else if isRejectErr {
-		labels, ao = rejectAuctionRequest(*rejectErr, w, hookExecutor, req.BidRequest, account, labels, ao)
+		labels, ao = rejectAuctionRequest(*rejectErr, w, hookExecutor, req.BidRequest, account, labels, ao, seatNonBid)
 		return
 	}
 
-	err = setSeatNonBidRaw(req, auctionResponse)
-	if err != nil {
-		glog.Errorf("Error setting seat non-bid: %v", err)
-	}
-	labels, ao = sendAuctionResponse(w, hookExecutor, response, req.BidRequest, account, labels, ao)
+	labels, ao = sendAuctionResponse(w, hookExecutor, response, req.BidRequest, account, labels, ao, seatNonBid)
 }
 
 // setSeatNonBidRaw is transitional function for setting SeatNonBid inside bidResponse.Ext
@@ -304,18 +312,20 @@ func (deps *endpointDeps) Auction(w http.ResponseWriter, r *http.Request, _ http
 // 1. today exchange.HoldAuction prepares and marshals some piece of response.Ext which is then used by auction.go, amp_auction.go and video_auction.go
 // 2. As per discussion with Prebid Team we are planning to move away from - HoldAuction building openrtb2.BidResponse. instead respective auction modules will build this object
 // 3. So, we will need this method to do first,  unmarshalling of response.Ext
-func setSeatNonBidRaw(request *openrtb_ext.RequestWrapper, auctionResponse *exchange.AuctionResponse) error {
-	if auctionResponse == nil || auctionResponse.BidResponse == nil {
+func setSeatNonBidRaw(request *openrtb_ext.RequestWrapper, response *openrtb2.BidResponse, nonBids []openrtb_ext.SeatNonBid) error {
+	if response == nil || !returnAllBidStatus(request) {
 		return nil
+	}
+	if response.Ext == nil {
+		response.Ext = json.RawMessage(`{}`)
 	}
 	// unmarshalling is required here, until we are moving away from bidResponse.Ext, which is populated
 	// by HoldAuction
-	response := auctionResponse.BidResponse
 	respExt := &openrtb_ext.ExtBidResponse{}
 	if err := jsonutil.Unmarshal(response.Ext, &respExt); err != nil {
 		return err
 	}
-	if setSeatNonBid(respExt, request, auctionResponse) {
+	if setSeatNonBid(respExt, nonBids) {
 		if respExtJson, err := jsonutil.Marshal(respExt); err == nil {
 			response.Ext = respExtJson
 			return nil
@@ -334,6 +344,7 @@ func rejectAuctionRequest(
 	account *config.Account,
 	labels metrics.Labels,
 	ao analytics.AuctionObject,
+	seatNonBid *openrtb_ext.SeatNonBidBuilder,
 ) (metrics.Labels, analytics.AuctionObject) {
 	response := &openrtb2.BidResponse{NBR: openrtb3.NoBidReason(rejectErr.NBR).Ptr()}
 	if request != nil {
@@ -343,7 +354,21 @@ func rejectAuctionRequest(
 	ao.Response = response
 	ao.Errors = append(ao.Errors, rejectErr)
 
-	return sendAuctionResponse(w, hookExecutor, response, request, account, labels, ao)
+	return sendAuctionResponse(w, hookExecutor, response, request, account, labels, ao, seatNonBid)
+}
+
+func getNonBidsFromStageOutcomes(stageOutcomes []hookexecution.StageOutcome) openrtb_ext.SeatNonBidBuilder {
+	seatNonBid := openrtb_ext.SeatNonBidBuilder{}
+	for _, stageOutcome := range stageOutcomes {
+		for _, groups := range stageOutcome.Groups {
+			for _, result := range groups.InvocationResults {
+				if result.Status == hookexecution.StatusSuccess {
+					seatNonBid.Append(result.SeatNonBid)
+				}
+			}
+		}
+	}
+	return seatNonBid
 }
 
 func sendAuctionResponse(
@@ -354,12 +379,20 @@ func sendAuctionResponse(
 	account *config.Account,
 	labels metrics.Labels,
 	ao analytics.AuctionObject,
+	seatNonBid *openrtb_ext.SeatNonBidBuilder,
 ) (metrics.Labels, analytics.AuctionObject) {
 	hookExecutor.ExecuteAuctionResponseStage(response)
 
+	stageOutcomes := hookExecutor.GetOutcomes()
+	seatNonBid.Append(getNonBidsFromStageOutcomes(stageOutcomes))
+	ao.SeatNonBid = seatNonBid.Get()
+
 	if response != nil {
-		stageOutcomes := hookExecutor.GetOutcomes()
 		ao.HookExecutionOutcome = stageOutcomes
+		err := setSeatNonBidRaw(ao.RequestWrapper, response, ao.SeatNonBid)
+		if err != nil {
+			glog.Errorf("Error setting seatNonBid in responseExt: %v", err)
+		}
 
 		ext, warns, err := hookexecution.EnrichExtBidResponse(response.Ext, stageOutcomes, request, account)
 		if err != nil {
@@ -529,6 +562,12 @@ func (deps *endpointDeps) parseRequest(httpRequest *http.Request, labels *metric
 	}
 
 	if err := jsonutil.UnmarshalValid(requestJson, req.BidRequest); err != nil {
+		errs = []error{err}
+		return
+	}
+
+	// normalize to openrtb 2.6
+	if err := openrtb_ext.ConvertUpTo26(req); err != nil {
 		errs = []error{err}
 		return
 	}
@@ -823,10 +862,6 @@ func (deps *endpointDeps) validateRequest(account *config.Account, httpReq *http
 		}
 	}
 
-	if err := mapSChains(req); err != nil {
-		return []error{err}
-	}
-
 	if err := validateOrFillChannel(req, isAmp); err != nil {
 		return []error{err}
 	}
@@ -928,32 +963,6 @@ func (deps *endpointDeps) validateRequest(account *config.Account, httpReq *http
 	}
 
 	return errL
-}
-
-// mapSChains maps an schain defined in an ORTB 2.4 location (req.ext.schain) to the ORTB 2.5 location
-// (req.source.ext.schain) if no ORTB 2.5 schain (req.source.ext.schain, req.ext.prebid.schains) exists.
-// An ORTB 2.4 schain is always deleted from the 2.4 location regardless of whether an ORTB 2.5 schain exists.
-func mapSChains(req *openrtb_ext.RequestWrapper) error {
-	reqExt, err := req.GetRequestExt()
-	if err != nil {
-		return fmt.Errorf("req.ext is invalid: %v", err)
-	}
-	sourceExt, err := req.GetSourceExt()
-	if err != nil {
-		return fmt.Errorf("source.ext is invalid: %v", err)
-	}
-
-	reqExtSChain := reqExt.GetSChain()
-	reqExt.SetSChain(nil)
-
-	if reqPrebid := reqExt.GetPrebid(); reqPrebid != nil && reqPrebid.SChains != nil {
-		return nil
-	} else if sourceExt.GetSChain() != nil {
-		return nil
-	} else if reqExtSChain != nil {
-		sourceExt.SetSChain(reqExtSChain)
-	}
-	return nil
 }
 
 func validateAndFillSourceTID(req *openrtb_ext.RequestWrapper, generateRequestID bool, hasStoredBidRequest bool, isAmp bool) error {
@@ -1155,12 +1164,17 @@ func validateRequestExt(req *openrtb_ext.RequestWrapper) []error {
 }
 
 func validateTargeting(t *openrtb_ext.ExtRequestTargeting) error {
-	if t != nil {
-		if t.PriceGranularity != nil {
-			if err := validatePriceGranularity(t.PriceGranularity); err != nil {
-				return err
-			}
+	if t == nil {
+		return nil
+	}
+
+	if t.PriceGranularity != nil {
+		if err := validatePriceGranularity(t.PriceGranularity); err != nil {
+			return err
 		}
+	}
+
+	if t.MediaTypePriceGranularity != nil {
 		if t.MediaTypePriceGranularity.Video != nil {
 			if err := validatePriceGranularity(t.MediaTypePriceGranularity.Video); err != nil {
 				return err
@@ -1177,6 +1191,7 @@ func validateTargeting(t *openrtb_ext.ExtRequestTargeting) error {
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -1229,8 +1244,8 @@ func (deps *endpointDeps) validateApp(req *openrtb_ext.RequestWrapper) error {
 	}
 
 	if req.App.ID != "" {
-		if _, found := deps.cfg.BlacklistedAppMap[req.App.ID]; found {
-			return &errortypes.BlacklistedApp{Message: fmt.Sprintf("Prebid-server does not process requests from App ID: %s", req.App.ID)}
+		if _, found := deps.cfg.BlockedAppsLookup[req.App.ID]; found {
+			return &errortypes.BlockedApp{Message: fmt.Sprintf("Prebid-server does not process requests from App ID: %s", req.App.ID)}
 		}
 	}
 
@@ -1294,22 +1309,18 @@ func (deps *endpointDeps) validateUser(req *openrtb_ext.RequestWrapper, aliases 
 	}
 
 	// Check Universal User ID
-	eids := userExt.GetEid()
-	if eids != nil {
-		eidsValue := *eids
-		for eidIndex, eid := range eidsValue {
-			if eid.Source == "" {
-				return append(errL, fmt.Errorf("request.user.ext.eids[%d] missing required field: \"source\"", eidIndex))
-			}
+	for eidIndex, eid := range req.User.EIDs {
+		if eid.Source == "" {
+			return append(errL, fmt.Errorf("request.user.eids[%d] missing required field: \"source\"", eidIndex))
+		}
 
-			if len(eid.UIDs) == 0 {
-				return append(errL, fmt.Errorf("request.user.ext.eids[%d].uids must contain at least one element or be undefined", eidIndex))
-			}
+		if len(eid.UIDs) == 0 {
+			return append(errL, fmt.Errorf("request.user.eids[%d].uids must contain at least one element or be undefined", eidIndex))
+		}
 
-			for uidIndex, uid := range eid.UIDs {
-				if uid.ID == "" {
-					return append(errL, fmt.Errorf("request.user.ext.eids[%d].uids[%d] missing required field: \"id\"", eidIndex, uidIndex))
-				}
+		for uidIndex, uid := range eid.UIDs {
+			if uid.ID == "" {
+				return append(errL, fmt.Errorf("request.user.eids[%d].uids[%d] missing required field: \"id\"", eidIndex, uidIndex))
 			}
 		}
 	}
@@ -1338,16 +1349,11 @@ func validateRegs(req *openrtb_ext.RequestWrapper, gpp gpplib.GppContainer) []er
 				WarningCode: errortypes.InvalidPrivacyConsentWarningCode})
 		}
 	}
-	regsExt, err := req.GetRegExt()
-	if err != nil {
-		return append(errL, fmt.Errorf("request.regs.ext is invalid: %v", err))
-	}
 
-	gdpr := regsExt.GetGDPR()
-	if gdpr != nil && *gdpr != 0 && *gdpr != 1 {
-		return append(errL, errors.New("request.regs.ext.gdpr must be either 0 or 1"))
+	reqGDPR := req.BidRequest.Regs.GDPR
+	if reqGDPR != nil && *reqGDPR != 0 && *reqGDPR != 1 {
+		return append(errL, errors.New("request.regs.gdpr must be either 0 or 1"))
 	}
-
 	return errL
 }
 
@@ -1370,7 +1376,6 @@ func validateDevice(device *openrtb2.Device) error {
 	if device.Geo != nil && device.Geo.Accuracy < 0 {
 		return errors.New("request.device.geo.accuracy must be a positive number")
 	}
-
 	return nil
 }
 
@@ -1497,6 +1502,11 @@ func (deps *endpointDeps) setFieldsImplicitly(httpReq *http.Request, r *openrtb_
 
 	setAuctionTypeImplicitly(r)
 
+	err := setGPCImplicitly(httpReq, r)
+	if err != nil {
+		return []error{err}
+	}
+
 	errs := setSecBrowsingTopicsImplicitly(httpReq, r, account)
 	return errs
 }
@@ -1514,6 +1524,28 @@ func setAuctionTypeImplicitly(r *openrtb_ext.RequestWrapper) {
 	if r.AT == 0 {
 		r.AT = 1
 	}
+}
+
+func setGPCImplicitly(httpReq *http.Request, r *openrtb_ext.RequestWrapper) error {
+	secGPC := httpReq.Header.Get(secGPCKey)
+
+	if secGPC != "1" {
+		return nil
+	}
+
+	regExt, err := r.GetRegExt()
+	if err != nil {
+		return err
+	}
+
+	if regExt.GetGPC() != nil {
+		return nil
+	}
+
+	gpc := "1"
+	regExt.SetGPC(&gpc)
+
+	return nil
 }
 
 // setSecBrowsingTopicsImplicitly updates user.data with data from request header 'Sec-Browsing-Topics'
@@ -1676,9 +1708,9 @@ func (deps *endpointDeps) processStoredRequests(requestJson []byte, impInfo []Im
 		}
 	}
 
-	// Apply default aliases, if they are provided
+	// apply default stored request
 	if deps.defaultRequest {
-		aliasedRequest, err := jsonpatch.MergePatch(deps.defReqJSON, resolvedRequest)
+		merged, err := jsonpatch.MergePatch(deps.defReqJSON, resolvedRequest)
 		if err != nil {
 			hasErr, Err := getJsonSyntaxError(resolvedRequest)
 			if hasErr {
@@ -1691,7 +1723,7 @@ func (deps *endpointDeps) processStoredRequests(requestJson []byte, impInfo []Im
 			}
 			return nil, nil, []error{err}
 		}
-		resolvedRequest = aliasedRequest
+		resolvedRequest = merged
 	}
 
 	// Apply any Stored Imps, if they exist. Since the JSON Merge Patch overrides arrays,
@@ -1870,9 +1902,9 @@ func writeError(errs []error, w http.ResponseWriter, labels *metrics.Labels) boo
 		metricsStatus := metrics.RequestStatusBadInput
 		for _, err := range errs {
 			erVal := errortypes.ReadCode(err)
-			if erVal == errortypes.BlacklistedAppErrorCode || erVal == errortypes.AccountDisabledErrorCode {
+			if erVal == errortypes.BlockedAppErrorCode || erVal == errortypes.AccountDisabledErrorCode {
 				httpStatus = http.StatusServiceUnavailable
-				metricsStatus = metrics.RequestStatusBlacklisted
+				metricsStatus = metrics.RequestStatusBlockedApp
 				break
 			} else if erVal == errortypes.MalformedAcctErrorCode {
 				httpStatus = http.StatusInternalServerError
@@ -2010,4 +2042,32 @@ func checkIfAppRequest(request []byte) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+// setSeatNonBid populates bidresponse.ext.prebid.seatnonbid
+func setSeatNonBid(finalExtBidResponse *openrtb_ext.ExtBidResponse, seatNonBid []openrtb_ext.SeatNonBid) bool {
+	if finalExtBidResponse == nil || len(seatNonBid) == 0 {
+		return false
+	}
+	if finalExtBidResponse.Prebid == nil {
+		finalExtBidResponse.Prebid = &openrtb_ext.ExtResponsePrebid{}
+	}
+	finalExtBidResponse.Prebid.SeatNonBid = seatNonBid
+	return true
+}
+
+// returnAllBidStatus function returns the value of bidrequest.ext.prebid.returnallbidstatus flag
+func returnAllBidStatus(request *openrtb_ext.RequestWrapper) bool {
+	if request == nil {
+		return false
+	}
+	reqExt, err := request.GetRequestExt()
+	if err != nil {
+		return false
+	}
+	prebid := reqExt.GetPrebid()
+	if prebid == nil {
+		return false
+	}
+	return prebid.ReturnAllBidStatus
 }

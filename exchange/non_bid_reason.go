@@ -1,29 +1,41 @@
 package exchange
 
-// SeatNonBid list the reasons why bid was not resulted in positive bid
-// reason could be either No bid, Error, Request rejection or Response rejection
-// Reference:  https://github.com/InteractiveAdvertisingBureau/openrtb/blob/master/extensions/community_extensions/seat-non-bid.md
-type NonBidReason int
+import (
+	"errors"
+	"net"
+	"syscall"
 
-const (
-	NoBidUnknownError                      NonBidReason = 0 // No Bid - General
-	ResponseRejectedGeneral                NonBidReason = 300
-	ResponseRejectedBelowFloor             NonBidReason = 301 // Response Rejected - Below Floor
-	ResponseRejectedCategoryMappingInvalid NonBidReason = 303 // Response Rejected - Category Mapping Invalid
-	ResponseRejectedBelowDealFloor         NonBidReason = 304 // Response Rejected - Bid was Below Deal Floor
-	ResponseRejectedCreativeSizeNotAllowed NonBidReason = 351 // Response Rejected - Invalid Creative (Size Not Allowed)
-	ResponseRejectedCreativeNotSecure      NonBidReason = 352 // Response Rejected - Invalid Creative (Not Secure)
+	"github.com/prebid/prebid-server/v3/errortypes"
+	"github.com/prebid/prebid-server/v3/openrtb_ext"
 )
 
-// Ptr returns pointer to own value.
-func (n NonBidReason) Ptr() *NonBidReason {
-	return &n
+func errorToNonBidReason(err error) openrtb_ext.NonBidReason {
+	switch errortypes.ReadCode(err) {
+	case errortypes.TimeoutErrorCode:
+		return openrtb_ext.ErrorTimeout
+	default:
+		return openrtb_ext.ErrorGeneral
+	}
 }
 
-// Val safely dereferences pointer, returning default value (NoBidUnknownError) for nil.
-func (n *NonBidReason) Val() NonBidReason {
-	if n == nil {
-		return NoBidUnknownError
+// httpInfoToNonBidReason determines NoBidReason code (NBR)
+// It will first try to resolve the NBR based on prebid's proprietary error code.
+// If proprietary error code not found then it will try to determine NBR using
+// system call level error code
+func httpInfoToNonBidReason(httpInfo *httpCallInfo) openrtb_ext.NonBidReason {
+	nonBidReason := errorToNonBidReason(httpInfo.err)
+	if nonBidReason != openrtb_ext.ErrorGeneral {
+		return nonBidReason
 	}
-	return *n
+	if isBidderUnreachableError(httpInfo) {
+		return openrtb_ext.ErrorBidderUnreachable
+	}
+	return openrtb_ext.ErrorGeneral
+}
+
+// isBidderUnreachableError checks if the error is due to connection refused or no such host
+func isBidderUnreachableError(httpInfo *httpCallInfo) bool {
+	var dnsErr *net.DNSError
+	isNoSuchHost := errors.As(httpInfo.err, &dnsErr) && dnsErr.IsNotFound
+	return errors.Is(httpInfo.err, syscall.ECONNREFUSED) || isNoSuchHost
 }
